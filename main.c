@@ -6,38 +6,68 @@
 
 #include "tc/tc.h"
 
-void sigint_handler(int sig);
-void sigwinch_handler(int sig);
-
 void initial_setup(void);
 
 void parse_input(void);
 void redraw_screen(void);
+void quit_program(void);
 
-const uint8_t menu_entries_size = 5;
-// const char menu_entries[menu_entries_size][5] = {
-// 	"ciao1",
-// 	"ciao2",
-// 	"ciao3",
-// 	"ciao4",
-// 	"ciao5"
-// };
+void sigint_handler(int sig);
+void sigwinch_handler(int sig);
+
+enum {
+	max_menu_entries_len = 64
+};
+const char menu_entries[][max_menu_entries_len] = {
+	"start",
+	"start special",
+	"about",
+	"quit"
+};
+const size_t menu_entries_size = sizeof(menu_entries) / sizeof(menu_entries[0]);
 
 static uint16_t terminal_size_x;
 static uint16_t terminal_size_y;
 
 static uint8_t state = 0;
-static bool need_refresh = true;
+typedef struct {
+	bool refresh;
+	bool quit;
+	bool enter;
+	bool move_up;
+	bool move_down;
+}actions_d;
+static actions_d actions;
 
 int main(void) {
 	initial_setup();
 
 	while(true) {
-		if(need_refresh == true) {
-			redraw_screen();
-			need_refresh = false;
-		}
 		parse_input();
+		if(actions.refresh == true) {
+			redraw_screen();
+			actions.refresh = false;
+		}
+		if(actions.quit == true) {
+			//just quit like with SIGINT
+			quit_program();
+		}
+		if(actions.enter == true) {
+			tc_move_to(terminal_size_y, 1);
+			printf("%s", menu_entries[state]);
+			fflush(stdout);
+			actions.enter = false;
+		}
+		if(actions.move_up == true) {
+			state = state > 0?state - 1:menu_entries_size - 1;
+			actions.refresh = true;
+			actions.move_up = false;
+		}
+		if(actions.move_down == true) {
+			state = state < menu_entries_size - 1?state + 1:0;
+			actions.refresh = true;
+			actions.move_down = false;
+		}
 	}
 	
 	tc_restore_defaults();
@@ -56,37 +86,39 @@ void initial_setup(void) {
 
 	tc_get_terminal_size(&terminal_size_y, &terminal_size_x);
 
+	actions.enter = false;
+	actions.quit = false;
+	actions.refresh = true;
+
 	tc_erase_to_origin();
 	fflush(stdout);
 }
 void parse_input(void) {
 	static tc_keyboard_input_d buff;
 	tc_get_pressed_keys(&buff);
-	bool found = false;
-	size_t i;
-	for(i = 0;i < buff.escape_input_size && found == false;i++) {
+	for(size_t i = 0;i < buff.escape_input_size;i++) {
 		switch(buff.escape_input[i]) {
-			case TC_ARROW_UP:
+			case TC_ARROW_UP: {
+				actions.move_up = true;
+			} break;
 			case TC_ARROW_DOWN: {
-				found = true;
+				actions.move_down = true;
 			} break;
 			default: {
 			}
 		}
 	}
-	if(found == true) {
-		if(buff.escape_input[i - 1] == TC_ARROW_UP) {
-			if (state <= 0) {
-				state = menu_entries_size;
-			}
-			state--;
-		} else {
-			state++;
-			if(state >= menu_entries_size) {
-				state = 0;
+	for(size_t i = 0;i < buff.normal_input_size;i++) {
+		switch(buff.normal_input[i]) {
+			case '\n': {
+				actions.enter = true;
+			} break;
+			case 'q': {
+				actions.quit = true;
+			} break;
+			default: {
 			}
 		}
-		need_refresh = true;
 	}
 }
 void redraw_screen(void) {
@@ -98,20 +130,23 @@ void redraw_screen(void) {
 		} else {
 			tc_set_color_default();
 		}
-		printf("scemo in culo %d                         \n", i);
+		// printf("scemo in culo %d                         \n", i);
+		printf("%s\n", menu_entries[i]);
 	}
 	fflush(stdout);
 	tc_set_color_default();
 }
-
-//callbacks
-void sigint_handler(int sig) {
+void quit_program(void) {
 	tc_reset_font();
 	tc_erase_to_origin();
 	tc_hide_cursor(false);
-	printf("termined with SIGINT\n");
 	tc_restore_defaults();
 	exit(0);
+}
+
+//callbacks
+void sigint_handler(int sig) {
+	quit_program();
 }
 
 void sigwinch_handler(int sig) {
